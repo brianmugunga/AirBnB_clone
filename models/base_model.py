@@ -1,66 +1,209 @@
 #!/usr/bin/python3
 """
-Parent Module -  all common attributes/methods for other classes
+This module contains the command interpeter
+for managing Airbnb files
 """
-from uuid import uuid4
-from datetime import datetime
+import cmd
 import models
+from models.base_model import BaseModel
+from models.user import User
+from models import storage, allclasses
+from datetime import datetime
+from models.city import City
+from models.state import State
+from models.amenity import Amenity
+from models.place import Place
+from models.review import Review
+import shlex
+import re
 
 
-class BaseModel:
-    """ Parent class - Encharge of serialization/deserialization process
-        Add an unique ID for every instace
-        Add time for creating and updating
+class HBNBCommand(cmd.Cmd):
     """
+    Class that inherits from cmd.Cmd
+    """
+    prompt = '(hbnb) '
+    classes = allclasses
 
-    def __init__(self, *args, **kwargs):
+    def do_create(self, args):
         """
-        Set inital values for every intance
-        Args:
-            *args: Is not used
-            **kwargs: instance attributes - each key is an attribute name
+        Creates a new instance of BaseModel, saves it to JSON file
+        and prints the id
         """
-        if (kwargs):
-                for key, value in kwargs.items():
-                    if key != "__class__":
-                        if key == "created_at" or key == "updated_at":
-                            val = datetime.strptime(value,
-                                                    '%Y-%m-%dT%H:%M:%S.%f')
-                            setattr(self, key, val)
-                        else:
-                            setattr(self, key, value)
+        if not args:
+            print("** class name missing **")
+            return
+        tokens = args.split(" ")
+        if tokens[0] in self.classes:
+            new = eval("{}()".format(tokens[0]))
+            new.save()
+            print("{}".format(new.id))
         else:
-            self.id = str(uuid4())
-            self.created_at = datetime.now()
-            self.updated_at = datetime.now()
-            models.storage.new(self)
+            print("** class doesn't exist **")
 
-    def __str__(self):
+    def do_destroy(self, args):
         """
-        Represetation of a intaces
-        Returns:
-            str: [<class name>] (<self.id>) <self.__dict__>
+        Deletes an instance based on the class name and id
+        saves the changes into JSON file
         """
-        cls = type(self).__name__
-        return "[{}] ({}) {}".format(cls, self.id, self.__dict__)
+        if not args:
+            print("** class name missing **")
+            return
+        tokens = args.split(" ")
+        objects = storage.all()
 
-    def save(self):
-        """
-        Updates time and save changes into __objects (in FileStorage)
-        """
-        self.updated_at = datetime.now()
-        models.storage.save()
+        if tokens[0] in self.classes:
+            if len(tokens) < 2:
+                print("** instance id missing **")
+                return
+            name = tokens[0] + "." + tokens[1]
+            if name not in objects:
+                print("** no instance found **")
+            else:
+                obj = objects[name]
+                if obj:
+                    objs = storage.all()
+                    del objs["{}.{}".format(type(obj).__name__, obj.id)]
+                    storage.save()
+        else:
+            print("** class doesn't exist **")
 
-    def to_dict(self):
+    def do_all(self, args):
         """
-        dictionary representation fo every intance
-        time format: %Y-%m-%dT%H:%M:%S.%f
-        key __class__ added to identify every intance
-        Returns:
-            dict: dictionary
+        Prints all string representation of all instances
+        based or not on the class name
         """
-        dictionary = self.__dict__.copy()
-        dictionary.update({'__class__': type(self).__name__})
-        dictionary['created_at'] = self.created_at.isoformat()
-        dictionary['updated_at'] = self.updated_at.isoformat()
-        return dictionary
+        objects = storage.all()
+        instances = []
+        if not args:
+            for name in objects:
+                instances.append(objects[name])
+            print(instances)
+            return
+        tokens = args.split(" ")
+        if tokens[0] in self.classes:
+            for name in objects:
+                if name[0:len(tokens[0])] == tokens[0]:
+                    instances.append(objects[name])
+            print(instances)
+        else:
+            print("** class doesn't exist **")
+
+    def do_update(self, args):
+        """
+        Update an instance based on the class name and id by adding
+        or updating attribute (save the change into the JSON file).
+        """
+        if not args:
+            print("** class name missing **")
+            return
+        tokens = args.split(" ")
+        objects = storage.all()
+        if tokens[0] in self.classes:
+            if len(tokens) < 2:
+                print("** instance id missing **")
+                return
+            name = tokens[0] + "." + tokens[1]
+            if name not in objects:
+                print("** no instance found **")
+            else:
+                obj = objects[name]
+                untouchable = ["id", "created_at", "updated_at"]
+                if obj:
+                    token = args.split(" ")
+                    if len(token) < 3:
+                        print("** attribute name missing **")
+                    elif len(token) < 4:
+                        print("** value missing **")
+                    elif token[2] not in untouchable:
+                        obj.__dict__[token[2]] = token[3]
+                        obj.updated_at = datetime.now()
+                        storage.save()
+        else:
+            print("** class doesn't exist **")
+
+    def do_show(self, args):
+        """ show string representation of an instance"""
+        tokens = args.split()
+        objects = storage.all()
+        try:
+            if len(tokens) == 0:
+                print("** class name missing **")
+                return
+            if tokens[0] in self.classes:
+                if len(tokens) > 1:
+                    key = tokens[0] + "." + tokens[1]
+                    if key in objects:
+                        obj = objects[key]
+                        print(obj)
+                    else:
+                        print("** no instance found **")
+                else:
+                    print("** instance id missing **")
+            else:
+                print("** class doesn't exist **")
+        except AttributeError:
+            print("** instance id missing **")
+
+    def default(self, args):
+        """
+        default method to use with command()
+        """
+        s = (args.replace('.', ' ').replace('(', ' ').replace(')', ' '))
+        tok = s.split()
+        if len(tok) > 1:
+            cmd = tok.pop(1)
+        if '{' in s and cmd == 'update':
+            s = s.replace('update', '')
+            dic = re.split(r"\s(?![^{]*})", s)
+            for key, val in eval(dic[3]).items():
+                arg = tok[0] + ' ' + tok[1][:-1] + ' ' + key + ' ' + str(val)
+                self.do_update(arg)
+            return
+        arg = ' '.join(tok).replace(',', '')
+        try:
+            eval('self.do_' + cmd + '(arg)')
+        except:
+            print("** invalid command **")
+
+    def do_count(self, args):
+        """
+        Counts number of instances of a class
+        """
+        objects = storage.all()
+        instances = []
+        count = 0
+        if args in self.classes:
+            for name in objects:
+                if name[0:len(args)] == args:
+                    count += 1
+            print(count)
+        else:
+            print("** class doesn't exist **")
+
+    def do_quit(self, args):
+        """
+        Quit command exits out of the command interpreter
+        """
+        quit()
+
+    def do_EOF(self, args):
+        """
+        EOF command exits out of the command interpreter
+        """
+        quit()
+
+    def do_help(self, args):
+        """
+        Command lists all help details for each command
+        """
+        cmd.Cmd.do_help(self, args)
+
+    def emptyline(self):
+        """
+        Returns back to the prompt
+        """
+        return
+
+if __name__ == "__main__":
+    HBNBCommand().cmdloop()
