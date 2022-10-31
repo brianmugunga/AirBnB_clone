@@ -1,1 +1,1 @@
-airbnb_clone
+WebStatic for AirBnB Clone
